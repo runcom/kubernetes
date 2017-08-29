@@ -119,12 +119,14 @@ func (p *cadvisorStatsProvider) ListPodStats() ([]statsapi.PodStats, error) {
 		// Update the PodStats entry with the stats from the container by
 		// adding it to podStats.Containers.
 		containerName := kubetypes.GetContainerName(cinfo.Spec.Labels)
+		glog.Infof("LISTPODSTATS: PRE-LIST POD STATS: %v, %v", containerName, cinfo)
 		if containerName == leaky.PodInfraContainerName {
 			// Special case for infrastructure container which is hidden from
 			// the user and has network stats.
 			podStats.Network = cadvisorInfoToNetworkStats("pod:"+ref.Namespace+"_"+ref.Name, &cinfo)
 			podStats.StartTime = metav1.NewTime(cinfo.Spec.CreationTime)
 		} else {
+			glog.Infof("LISTPODSTATS: LIST POD STATS: %v, %v", containerName, cinfo)
 			podStats.Containers = append(podStats.Containers, *cadvisorInfoToContainerStats(containerName, &cinfo, &rootFsInfo, &imageFsInfo))
 		}
 	}
@@ -191,6 +193,7 @@ func isPodManagedContainer(cinfo *cadvisorapiv2.ContainerInfo) bool {
 	podName := kubetypes.GetPodName(cinfo.Spec.Labels)
 	podNamespace := kubetypes.GetPodNamespace(cinfo.Spec.Labels)
 	managed := podName != "" && podNamespace != ""
+	glog.Infof("STATS: IS POD MANAGED CONTAINER: %v, %v, %v, %v", podName, podNamespace, managed, cinfo.Spec.Labels)
 	if !managed && podName != podNamespace {
 		glog.Warningf(
 			"Expect container to have either both podName (%s) and podNamespace (%s) labels, or neither.",
@@ -207,6 +210,7 @@ func isPodManagedContainer(cinfo *cadvisorapiv2.ContainerInfo) bool {
 func removeTerminatedContainerInfo(containerInfo map[string]cadvisorapiv2.ContainerInfo) map[string]cadvisorapiv2.ContainerInfo {
 	cinfoMap := make(map[containerID][]containerInfoWithCgroup)
 	for key, cinfo := range containerInfo {
+		glog.Infof("STATS: REMOVE TERMINATED CONTAINER INFO KEY: %v, VALUE: %v", key, cinfo)
 		if !isPodManagedContainer(&cinfo) {
 			continue
 		}
