@@ -43,6 +43,7 @@ const (
 	LabelSystemRoot   = "root"
 	LabelDockerImages = "docker-images"
 	LabelRktImages    = "rkt-images"
+	LabelCrioImages   = "crio-images"
 )
 
 // The maximum number of `du` and `find` tasks that can be running at once.
@@ -87,8 +88,9 @@ type RealFsInfo struct {
 
 type Context struct {
 	// docker root directory.
-	Docker  DockerContext
-	RktPath string
+	Docker   DockerContext
+	RktPath  string
+	CrioPath string
 }
 
 type DockerContext struct {
@@ -120,7 +122,8 @@ func NewFsInfo(context Context) (FsInfo, error) {
 	// need to call this before the log line below printing out the partitions, as this function may
 	// add a "partition" for devicemapper to fsInfo.partitions
 	fsInfo.addDockerImagesLabel(context, mounts)
-
+	// TODO: fix this
+	fsInfo.addCrioImagesLabel(context, mounts)
 	glog.Infof("Filesystem partitions: %+v", fsInfo.partitions)
 	fsInfo.addSystemRootLabel(mounts)
 	return fsInfo, nil
@@ -237,6 +240,14 @@ func (self *RealFsInfo) addDockerImagesLabel(context Context, mounts []*mount.In
 	}
 }
 
+func (self *RealFsInfo) addCrioImagesLabel(context Context, mounts []*mount.Info) {
+	// TODO: figure out...
+	if context.CrioPath != "" {
+		self.updateContainerImagesPath(LabelCrioImages, mounts, getCrioImagePaths(context))
+		fmt.Printf("CRIO IMAGE PATHS DONE")
+	}
+}
+
 func (self *RealFsInfo) addRktImagesLabel(context Context, mounts []*mount.Info) {
 	if context.RktPath != "" {
 		rktPath := context.RktPath
@@ -249,6 +260,18 @@ func (self *RealFsInfo) addRktImagesLabel(context Context, mounts []*mount.Info)
 		}
 		self.updateContainerImagesPath(LabelRktImages, mounts, rktImagesPaths)
 	}
+}
+
+func getCrioImagePaths(context Context) map[string]struct{} {
+	crioImagePaths := map[string]struct{}{
+		"/": {},
+	}
+	// TODO: have this on the crio context object?
+	crioRoot := "/var/lib/containers/storage"
+	for _, dir := range []string{"overlay"} {
+		crioImagePaths[path.Join(crioRoot, dir)] = struct{}{}
+	}
+	return crioImagePaths
 }
 
 // Generate a list of possible mount points for docker image management from the docker root directory.

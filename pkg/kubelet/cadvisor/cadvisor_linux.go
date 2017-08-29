@@ -215,6 +215,9 @@ func (cc *cadvisorClient) ImagesFsInfo() (cadvisorapiv2.FsInfo, error) {
 		label = cadvisorfs.LabelDockerImages
 	case "rkt":
 		label = cadvisorfs.LabelRktImages
+	case "remote":
+		// TODO: need to handle "remote" w/ cAdvisor better...
+		label = cadvisorfs.LabelCrioImages
 	default:
 		return cadvisorapiv2.FsInfo{}, fmt.Errorf("ImagesFsInfo: unknown runtime: %v", cc.runtime)
 	}
