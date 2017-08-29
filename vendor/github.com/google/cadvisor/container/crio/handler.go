@@ -16,8 +16,11 @@
 package crio
 
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"path"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -137,7 +140,7 @@ func newCrioContainerHandler(
 		rootfsStorageDir string
 	)
 	switch storageDriver {
-	case overlay2StorageDriver:
+	case overlay2StorageDriver, "overlay2":
 		rootfsStorageDir = path.Join(storageDir, string(storageDriver), rwLayerID)
 	}
 
@@ -156,39 +159,66 @@ func newCrioContainerHandler(
 		ignoreMetrics:      ignoreMetrics,
 	}
 
-	// need to parse the following:
-	// /run/crio/<some id>/config.json to get some of this data...
+	crioRun := "/run/containers/storage/%s-containers/%s"
+	pidfile := filepath.Join(fmt.Sprintf(crioRun, storageDriver+"2", id), "userdata", "pidfile")
+	config := filepath.Join(fmt.Sprintf(crioRun, storageDriver+"2", id), "userdata", "config.json")
+	cBytes, err := ioutil.ReadFile(config)
+	if err != nil {
+		return nil, err
+	}
+	var m struct {
+		Annotations map[string]string `json:"annotations,omitempty"`
+	}
+	if err = json.Unmarshal(cBytes, &m); err != nil {
+		return nil, err
+	}
 
-	// with docker, we traditionally did a docker inspect call on the container ID
-	// we then used that information to determine the following fields
-	handler.creationTime = time.Now()
-	// TODO: obviously this is wrong (looks like we need to read pidfile)
-	handler.pid = 1
-	// TODO we mapped an alias to crio id
+	created, err := time.Parse(time.RFC3339Nano, m.Annotations["io.kubernetes.cri-o.Created"])
+	if err != nil {
+		return nil, err
+	}
+	handler.creationTime = created
+
+	pidfileBytes, err := ioutil.ReadFile(pidfile)
+	if err != nil {
+		return nil, err
+	}
+	pid, err := strconv.Atoi(string(pidfileBytes))
+	if err != nil {
+		return nil, err
+	}
+	handler.pid = pid
+
+	labels := make(map[string]string)
+	if err = json.Unmarshal([]byte(m.Annotations["io.kubernetes.cri-o.Labels"]), &labels); err != nil {
+		return nil, err
+	}
+	annotations := make(map[string]string)
+	if err = json.Unmarshal([]byte(m.Annotations["io.kubernetes.cri-o.Annotations"]), &annotations); err != nil {
+		return nil, err
+	}
+
+	// we don't need "aliases" in CRI-O
 	handler.aliases = []string{}
-	// TODO we stored container config labels
-	// AT MINIMUM, WE NEED THE FOLLOWING:
-	// KubernetesPodNameLabel       = "io.kubernetes.pod.name"
-	// KubernetesPodNamespaceLabel  = "io.kubernetes.pod.namespace"
-	// KubernetesPodUIDLabel        = "io.kubernetes.pod.uid"
-	// KubernetesContainerNameLabel = "io.kubernetes.container.name"
-	// WITHOUT THE ABOVE, WE WILL NOT BE ABLE TO WORK IN KUBERNETES!
 	handler.labels = map[string]string{}
-	// TODO: we wanted to know the image that this container runs
-	handler.image = "busybox"
+	for k, v := range labels {
+		handler.labels[k] = v
+	}
+	handler.image = m.Annotations["io.kubernetes.cri-o.ImageName"]
 	// TODO: we wanted to know cntr.HostConfig.NetworkMode?
 	// TODO: we wantd to know graph driver DeviceId (dont think this is needed now)
-	// TODO: we wanted to know how many times the container was restarted
-	handler.restartCount = 0
+
+	restartCount, err := strconv.Atoi(annotations["io.kubernetes.container.restartCount"])
+	if err != nil {
+		return nil, err
+	}
+	handler.restartCount = restartCount
+
 	// TODO: we want to know the ip address of the container
 	handler.ipAddress = "10.10.0.1"
 	// we optionally collect disk usage metrics
 	if !ignoreMetrics.Has(container.DiskUsageMetrics) {
 		// TODO: add a handler.fsHandler
-	}
-	// TODO for env vars we wanted to show from container.Config.Env from whitelist
-	for _, exposedEnv := range metadataEnvs {
-		fmt.Printf("TODO whitelist: %v", exposedEnv)
 	}
 	return handler, nil
 }
