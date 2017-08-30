@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/golang/glog"
 	"github.com/google/cadvisor/container"
 	"github.com/google/cadvisor/container/common"
 	containerlibcontainer "github.com/google/cadvisor/container/libcontainer"
@@ -140,7 +141,7 @@ func newCrioContainerHandler(
 		rootfsStorageDir string
 	)
 	switch storageDriver {
-	case overlay2StorageDriver, "overlay2":
+	case overlayStorageDriver, overlay2StorageDriver:
 		rootfsStorageDir = path.Join(storageDir, string(storageDriver), rwLayerID)
 	}
 
@@ -160,41 +161,48 @@ func newCrioContainerHandler(
 	}
 
 	crioRun := "/run/containers/storage/%s-containers/%s"
-	pidfile := filepath.Join(fmt.Sprintf(crioRun, storageDriver+"2", id), "userdata", "pidfile")
-	config := filepath.Join(fmt.Sprintf(crioRun, storageDriver+"2", id), "userdata", "config.json")
+	pidfile := filepath.Join(fmt.Sprintf(crioRun, storageDriver, id), "userdata", "pidfile")
+	config := filepath.Join(fmt.Sprintf(crioRun, storageDriver, id), "userdata", "config.json")
 	cBytes, err := ioutil.ReadFile(config)
 	if err != nil {
+		glog.Infof("CRIO HANDLER ERROR READING CONFIG: %v", err)
 		return nil, err
 	}
 	var m struct {
 		Annotations map[string]string `json:"annotations,omitempty"`
 	}
 	if err = json.Unmarshal(cBytes, &m); err != nil {
+		glog.Infof("CRIO HANDLER ERROR READING Annotations: %v", err)
 		return nil, err
 	}
 
 	created, err := time.Parse(time.RFC3339Nano, m.Annotations["io.kubernetes.cri-o.Created"])
 	if err != nil {
+		glog.Infof("CRIO HANDLER ERROR READING CREATE TIMESTAMP: %v", err)
 		return nil, err
 	}
 	handler.creationTime = created
 
 	pidfileBytes, err := ioutil.ReadFile(pidfile)
 	if err != nil {
+		glog.Infof("CRIO HANDLER ERROR READING PIDFILE: %v", err)
 		return nil, err
 	}
 	pid, err := strconv.Atoi(string(pidfileBytes))
 	if err != nil {
+		glog.Infof("CRIO HANDLER ERROR READING PID: %v", err)
 		return nil, err
 	}
 	handler.pid = pid
 
 	labels := make(map[string]string)
 	if err = json.Unmarshal([]byte(m.Annotations["io.kubernetes.cri-o.Labels"]), &labels); err != nil {
+		glog.Infof("CRIO HANDLER ERROR READING LABELS: %v", err)
 		return nil, err
 	}
 	annotations := make(map[string]string)
 	if err = json.Unmarshal([]byte(m.Annotations["io.kubernetes.cri-o.Annotations"]), &annotations); err != nil {
+		glog.Infof("CRIO HANDLER ERROR READING ANNOTATIONS: %v", err)
 		return nil, err
 	}
 
@@ -210,6 +218,7 @@ func newCrioContainerHandler(
 
 	restartCount, err := strconv.Atoi(annotations["io.kubernetes.container.restartCount"])
 	if err != nil {
+		glog.Infof("CRIO HANDLER ERROR READING RESTART COUNT: %v", err)
 		return nil, err
 	}
 	handler.restartCount = restartCount
@@ -220,6 +229,8 @@ func newCrioContainerHandler(
 	if !ignoreMetrics.Has(container.DiskUsageMetrics) {
 		// TODO: add a handler.fsHandler
 	}
+
+	glog.Infof("CRIO HANDLER: %v", handler)
 	return handler, nil
 }
 
