@@ -59,7 +59,8 @@ type storageDriver string
 
 const (
 	// TODO add full set of supported drivers in future..
-	overlay2StorageDriver storageDriver = "overlay"
+	overlayStorageDriver  storageDriver = "overlay"
+	overlay2StorageDriver storageDriver = "overlay2"
 )
 
 type crioFactory struct {
@@ -153,18 +154,25 @@ var (
 // Register root container before running this function!
 func Register(factory info.MachineInfoFactory, fsInfo fs.FsInfo, ignoreMetrics container.MetricSet) error {
 	// TODO initialize any client we will use to speak to crio
+	// runcom mrunal -- ideally, we read /etc/crio/crio.conf here so we know how machine is configured
+	// i.e. what is the storage driver, etc.
 	// TODO determine crio version so we can work differently w/ future versions if needed
 	cgroupSubsystems, err := libcontainer.GetCgroupSubsystems()
 	if err != nil {
 		return fmt.Errorf("failed to get cgroup subsystems: %v", err)
 	}
+
+	// TODO: FIX ME mrunal / runcom so this is read from crio.conf
+	storageDriver := overlayStorageDriver
+	storageDir := RootDir()
+
 	glog.Infof("Registering CRI-O factory")
 	f := &crioFactory{
 		cgroupSubsystems:   cgroupSubsystems,
 		fsInfo:             fsInfo,
 		machineInfoFactory: factory,
-		storageDriver:      overlay2StorageDriver, // TODO this needs to not be hardcoded
-		storageDir:         RootDir(),
+		storageDriver:      storageDriver,
+		storageDir:         storageDir,
 		ignoreMetrics:      ignoreMetrics,
 	}
 
