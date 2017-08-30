@@ -224,10 +224,14 @@ func newCrioContainerHandler(
 	handler.restartCount = restartCount
 
 	// TODO: we want to know the ip address of the container
-	handler.ipAddress = "10.10.0.1"
+	handler.ipAddress = m.Annotations["io.kubernetes.cri-o.IP"]
 	// we optionally collect disk usage metrics
 	if !ignoreMetrics.Has(container.DiskUsageMetrics) {
 		// TODO: add a handler.fsHandler
+	}
+	// TODO for env vars we wanted to show from container.Config.Env from whitelist
+	for _, exposedEnv := range metadataEnvs {
+		glog.Infof("TODO env whitelist: %v", exposedEnv)
 	}
 
 	glog.Infof("CRIO HANDLER: %v", handler)
