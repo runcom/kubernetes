@@ -16,11 +16,8 @@
 package crio
 
 import (
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"path"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -97,6 +94,7 @@ func getRwLayerID(containerID, storageDir string, sd storageDriver) (string, err
 
 // newCrioContainerHandler returns a new container.ContainerHandler
 func newCrioContainerHandler(
+	client crioClient,
 	name string,
 	machineInfoFactory info.MachineInfoFactory,
 	fsInfo fs.FsInfo,
@@ -129,21 +127,16 @@ func newCrioContainerHandler(
 
 	id := ContainerNameToCrioId(name)
 
-	// TODO track where container log files are stored
-	rwLayerID, err := getRwLayerID(id, storageDir, storageDriver)
+	cInfo, err := client.ContainerInfo(id)
 	if err != nil {
-		// TODO: fix this and make
-		fmt.Println("Ignoring error in crio to get rw layer id: %v", err)
+		return nil, err
 	}
 
+	// passed to fs handler below ...
+	storageLogDir := cInfo.LogPath
+
 	// Determine the rootfs storage dir
-	var (
-		rootfsStorageDir string
-	)
-	switch storageDriver {
-	case overlayStorageDriver, overlay2StorageDriver:
-		rootfsStorageDir = path.Join(storageDir, string(storageDriver), rwLayerID)
-	}
+	rootfsStorageDir := cInfo.Root
 
 	// TODO: extract object mother method
 	handler := &crioContainerHandler{
@@ -160,74 +153,28 @@ func newCrioContainerHandler(
 		ignoreMetrics:      ignoreMetrics,
 	}
 
-	crioRun := "/run/containers/storage/%s-containers/%s"
-	pidfile := filepath.Join(fmt.Sprintf(crioRun, storageDriver, id), "userdata", "pidfile")
-	config := filepath.Join(fmt.Sprintf(crioRun, storageDriver, id), "userdata", "config.json")
-	cBytes, err := ioutil.ReadFile(config)
-	if err != nil {
-		glog.Infof("CRIO HANDLER ERROR READING CONFIG: %v", err)
-		return nil, err
-	}
-	var m struct {
-		Annotations map[string]string `json:"annotations,omitempty"`
-	}
-	if err = json.Unmarshal(cBytes, &m); err != nil {
-		glog.Infof("CRIO HANDLER ERROR READING Annotations: %v", err)
-		return nil, err
-	}
-
-	created, err := time.Parse(time.RFC3339Nano, m.Annotations["io.kubernetes.cri-o.Created"])
-	if err != nil {
-		glog.Infof("CRIO HANDLER ERROR READING CREATE TIMESTAMP: %v", err)
-		return nil, err
-	}
-	handler.creationTime = created
-
-	pidfileBytes, err := ioutil.ReadFile(pidfile)
-	if err != nil {
-		glog.Infof("CRIO HANDLER ERROR READING PIDFILE: %v", err)
-		return nil, err
-	}
-	pid, err := strconv.Atoi(string(pidfileBytes))
-	if err != nil {
-		glog.Infof("CRIO HANDLER ERROR READING PID: %v", err)
-		return nil, err
-	}
-	handler.pid = pid
-
-	labels := make(map[string]string)
-	if err = json.Unmarshal([]byte(m.Annotations["io.kubernetes.cri-o.Labels"]), &labels); err != nil {
-		glog.Infof("CRIO HANDLER ERROR READING LABELS: %v", err)
-		return nil, err
-	}
-	annotations := make(map[string]string)
-	if err = json.Unmarshal([]byte(m.Annotations["io.kubernetes.cri-o.Annotations"]), &annotations); err != nil {
-		glog.Infof("CRIO HANDLER ERROR READING ANNOTATIONS: %v", err)
-		return nil, err
-	}
-
+	handler.creationTime = time.Unix(0, cInfo.CreatedTime)
+	handler.pid = cInfo.Pid
 	// we don't need "aliases" in CRI-O
 	handler.aliases = []string{}
-	handler.labels = map[string]string{}
-	for k, v := range labels {
-		handler.labels[k] = v
-	}
-	handler.image = m.Annotations["io.kubernetes.cri-o.ImageName"]
+	handler.labels = cInfo.Labels
+	handler.image = cInfo.Image
 	// TODO: we wanted to know cntr.HostConfig.NetworkMode?
 	// TODO: we wantd to know graph driver DeviceId (dont think this is needed now)
 
-	restartCount, err := strconv.Atoi(annotations["io.kubernetes.container.restartCount"])
+	restartCount, err := strconv.Atoi(cInfo.Annotations["io.kubernetes.container.restartCount"])
 	if err != nil {
 		glog.Infof("CRIO HANDLER ERROR READING RESTART COUNT: %v", err)
 		return nil, err
 	}
 	handler.restartCount = restartCount
 
-	// TODO: we want to know the ip address of the container
-	handler.ipAddress = m.Annotations["io.kubernetes.cri-o.IP"]
+	// TODO(runcom): get IP from cInfo once cri-o#814 lands!
+	handler.ipAddress = cInfo.Annotations["io.kubernetes.cri-o.IP"]
+
 	// we optionally collect disk usage metrics
 	if !ignoreMetrics.Has(container.DiskUsageMetrics) {
-		// TODO: add a handler.fsHandler
+		handler.fsHandler = common.NewFsHandler(common.DefaultPeriod, rootfsStorageDir, storageLogDir, fsInfo)
 	}
 	// TODO for env vars we wanted to show from container.Config.Env from whitelist
 	for _, exposedEnv := range metadataEnvs {

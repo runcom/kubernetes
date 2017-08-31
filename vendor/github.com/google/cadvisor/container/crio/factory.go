@@ -20,7 +20,6 @@ import (
 	"path"
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/google/cadvisor/container"
 	"github.com/google/cadvisor/container/libcontainer"
@@ -39,21 +38,6 @@ const CrioNamespace = "crio"
 // Regexp that identifies docker cgroups, containers started with
 // --cgroup-parent have another prefix than 'docker'
 var crioCgroupRegexp = regexp.MustCompile(`([a-z0-9]{64})`)
-
-var (
-	// Basepath to all container specific information that libcontainer stores.
-	crioRootDir string
-
-	crioRootDirOnce sync.Once
-)
-
-func RootDir() string {
-	crioRootDirOnce.Do(func() {
-		// TODO: is there a crio info call we should make
-		crioRootDir = "/var/lib/containers"
-	})
-	return crioRootDir
-}
 
 type storageDriver string
 
@@ -76,6 +60,8 @@ type crioFactory struct {
 	fsInfo fs.FsInfo
 
 	ignoreMetrics container.MetricSet
+
+	client crioClient
 }
 
 func (self *crioFactory) String() string {
@@ -83,10 +69,14 @@ func (self *crioFactory) String() string {
 }
 
 func (self *crioFactory) NewContainerHandler(name string, inHostNamespace bool) (handler container.ContainerHandler, err error) {
-	// TODO if we have a crio-client, configure it here
+	client, err := Client()
+	if err != nil {
+		return
+	}
 	// TODO are there any env vars we need to white list, if so, do it here...
 	metadataEnvs := []string{}
 	handler, err = newCrioContainerHandler(
+		client,
 		name,
 		self.machineInfoFactory,
 		self.fsInfo,
@@ -124,7 +114,7 @@ func isContainerName(name string) bool {
 // crio handles all containers under /crio
 func (self *crioFactory) CanHandleAndAccept(name string) (bool, bool, error) {
 	glog.Infof("CRIO CAN HANDLE AND ACCEPT: %v", name)
-	if strings.HasPrefix(path.Base(name), "crio-conman") {
+	if strings.HasPrefix(path.Base(name), "crio-conmon") {
 		glog.Info("SKIPPING CRIO-CONMON")
 	}
 	if !strings.HasPrefix(path.Base(name), CrioNamespace) {
@@ -153,26 +143,30 @@ var (
 
 // Register root container before running this function!
 func Register(factory info.MachineInfoFactory, fsInfo fs.FsInfo, ignoreMetrics container.MetricSet) error {
-	// TODO initialize any client we will use to speak to crio
-	// runcom mrunal -- ideally, we read /etc/crio/crio.conf here so we know how machine is configured
-	// i.e. what is the storage driver, etc.
+	client, err := Client()
+	if err != nil {
+		return err
+	}
+
+	info, err := client.Info()
+	if err != nil {
+		return err
+	}
 	// TODO determine crio version so we can work differently w/ future versions if needed
+
 	cgroupSubsystems, err := libcontainer.GetCgroupSubsystems()
 	if err != nil {
 		return fmt.Errorf("failed to get cgroup subsystems: %v", err)
 	}
 
-	// TODO: FIX ME mrunal / runcom so this is read from crio.conf
-	storageDriver := overlayStorageDriver
-	storageDir := RootDir()
-
 	glog.Infof("Registering CRI-O factory")
 	f := &crioFactory{
+		client:             client,
 		cgroupSubsystems:   cgroupSubsystems,
 		fsInfo:             fsInfo,
 		machineInfoFactory: factory,
-		storageDriver:      storageDriver,
-		storageDir:         storageDir,
+		storageDriver:      storageDriver(info.StorageDriver),
+		storageDir:         info.StorageRoot,
 		ignoreMetrics:      ignoreMetrics,
 	}
 

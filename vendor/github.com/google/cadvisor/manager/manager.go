@@ -152,8 +152,14 @@ func New(memoryCache *memory.InMemoryCache, sysfs sysfs.SysFs, maxHousekeepingIn
 		glog.Warningf("unable to connect to Rkt api service: %v", err)
 	}
 
-	// TODO: fix this
-	crioPath := "/var/lib/crio"
+	crioClient, err := crio.Client()
+	if err != nil {
+		return nil, err
+	}
+	crioInfo, err := crioClient.Info()
+	if err != nil {
+		glog.Warningf("unable to connect to CRI-O api service: %v", err)
+	}
 
 	context := fs.Context{
 		Docker: fs.DockerContext{
@@ -161,8 +167,9 @@ func New(memoryCache *memory.InMemoryCache, sysfs sysfs.SysFs, maxHousekeepingIn
 			Driver:       dockerStatus.Driver,
 			DriverStatus: dockerStatus.DriverStatus,
 		},
+
 		RktPath:  rktPath,
-		CrioPath: crioPath,
+		CrioPath: crioInfo.StorageRoot,
 	}
 	fsInfo, err := fs.NewFsInfo(context)
 	if err != nil {
