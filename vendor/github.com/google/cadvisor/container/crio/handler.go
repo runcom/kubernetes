@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/golang/glog"
@@ -27,6 +28,8 @@ import (
 	containerlibcontainer "github.com/google/cadvisor/container/libcontainer"
 	"github.com/google/cadvisor/fs"
 	info "github.com/google/cadvisor/info/v1"
+	"k8s.io/kubernetes/pkg/kubelet/leaky"
+	"k8s.io/kubernetes/pkg/kubelet/types"
 
 	"github.com/opencontainers/runc/libcontainer/cgroups"
 	cgroupfs "github.com/opencontainers/runc/libcontainer/cgroups/fs"
@@ -63,6 +66,8 @@ type crioContainerHandler struct {
 
 	// The container PID used to switch namespaces as required
 	pid int
+	// Sandbox's pid used to read network stats
+	sandboxPid int
 
 	// Image name used for this container.
 	image string
@@ -137,6 +142,7 @@ func newCrioContainerHandler(
 
 	// Determine the rootfs storage dir
 	rootfsStorageDir := cInfo.Root
+	rootfsStorageDir = strings.TrimSuffix(rootfsStorageDir, "/merged")
 
 	// TODO: extract object mother method
 	handler := &crioContainerHandler{
@@ -155,22 +161,19 @@ func newCrioContainerHandler(
 
 	handler.creationTime = time.Unix(0, cInfo.CreatedTime)
 	handler.pid = cInfo.Pid
-	// we don't need "aliases" in CRI-O
-	handler.aliases = []string{}
+	handler.sandboxPid = cInfo.SandboxPid
+	handler.aliases = append(handler.aliases, cInfo.Name, id)
 	handler.labels = cInfo.Labels
+	glog.Infof("runcom  labels %v", cInfo.Labels)
 	handler.image = cInfo.Image
-	// TODO: we wanted to know cntr.HostConfig.NetworkMode?
 	// TODO: we wantd to know graph driver DeviceId (dont think this is needed now)
 
-	restartCount, err := strconv.Atoi(cInfo.Annotations["io.kubernetes.container.restartCount"])
-	if err != nil {
-		glog.Infof("CRIO HANDLER ERROR READING RESTART COUNT: %v", err)
-		return nil, err
-	}
+	// ignore err and get zero as default, this happens with sandboxes, not sure why...
+	// kube isn't sending restart count in labels
+	restartCount, _ := strconv.Atoi(cInfo.Annotations["io.kubernetes.container.restartCount"])
 	handler.restartCount = restartCount
 
-	// TODO(runcom): get IP from cInfo once cri-o#814 lands!
-	handler.ipAddress = cInfo.Annotations["io.kubernetes.cri-o.IP"]
+	handler.ipAddress = cInfo.IP
 
 	// we optionally collect disk usage metrics
 	if !ignoreMetrics.Has(container.DiskUsageMetrics) {
@@ -209,9 +212,7 @@ func (self *crioContainerHandler) ContainerReference() (info.ContainerReference,
 
 func (self *crioContainerHandler) needNet() bool {
 	if !self.ignoreMetrics.Has(container.NetworkUsageMetrics) {
-		// TODO this should be more intelligent
-		return false
-		// return !self.networkMode.IsContainer()
+		return self.labels[types.KubernetesContainerNameLabel] == leaky.PodInfraContainerName
 	}
 	return false
 }
@@ -291,14 +292,17 @@ func (self *crioContainerHandler) GetStats() (*info.ContainerStats, error) {
 	// infrastructure container. This stops metrics being reported multiple times
 	// for each container in a pod.
 	if !self.needNet() {
+		glog.Infof("RUNCOM NETSTAT 1")
 		stats.Network = info.NetworkStats{}
 	}
+	glog.Infof("RUNCOM NETSTAT 2: %v", stats.Network)
 
 	// Get filesystem stats.
 	err = self.getFsStats(stats)
 	if err != nil {
 		return stats, err
 	}
+	glog.Infof("RUNCOM CPU %v", stats.Cpu.Usage)
 
 	return stats, nil
 }

@@ -113,9 +113,9 @@ func isContainerName(name string) bool {
 
 // crio handles all containers under /crio
 func (self *crioFactory) CanHandleAndAccept(name string) (bool, bool, error) {
-	glog.Infof("CRIO CAN HANDLE AND ACCEPT: %v", name)
+	glog.Infof("CGROUP PATH CRIO %v", name)
 	if strings.HasPrefix(path.Base(name), "crio-conmon") {
-		glog.Info("SKIPPING CRIO-CONMON")
+		return false, false, nil
 	}
 	if !strings.HasPrefix(path.Base(name), CrioNamespace) {
 		return false, false, nil

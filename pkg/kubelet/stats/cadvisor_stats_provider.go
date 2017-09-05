@@ -90,7 +90,9 @@ func (p *cadvisorStatsProvider) ListPodStats() ([]statsapi.PodStats, error) {
 		}
 	}
 
+	glog.Infof("LISTPODSTATS: INFOS-PRE: %v", infos)
 	infos = removeTerminatedContainerInfo(infos)
+	glog.Infof("LISTPODSTATS: INFOS: %v", infos)
 
 	// Map each container to a pod and update the PodStats with container data.
 	podToStats := map[statsapi.PodReference]*statsapi.PodStats{}
@@ -102,6 +104,7 @@ func (p *cadvisorStatsProvider) ListPodStats() ([]statsapi.PodStats, error) {
 		if strings.HasSuffix(key, ".mount") {
 			continue
 		}
+		glog.Infof("CINFO RUNCOM %v", cinfo)
 		// Build the Pod key if this container is managed by a Pod
 		if !isPodManagedContainer(&cinfo) {
 			continue
@@ -125,6 +128,7 @@ func (p *cadvisorStatsProvider) ListPodStats() ([]statsapi.PodStats, error) {
 			// the user and has network stats.
 			podStats.Network = cadvisorInfoToNetworkStats("pod:"+ref.Namespace+"_"+ref.Name, &cinfo)
 			podStats.StartTime = metav1.NewTime(cinfo.Spec.CreationTime)
+			glog.Infof("LISTPODSTATS: LIST POD STATS PODPOD: %v, %v", containerName, cinfo)
 		} else {
 			glog.Infof("LISTPODSTATS: LIST POD STATS: %v, %v", containerName, cinfo)
 			podStats.Containers = append(podStats.Containers, *cadvisorInfoToContainerStats(containerName, &cinfo, &rootFsInfo, &imageFsInfo))
@@ -218,11 +222,14 @@ func removeTerminatedContainerInfo(containerInfo map[string]cadvisorapiv2.Contai
 			podRef:        buildPodRef(&cinfo),
 			containerName: kubetypes.GetContainerName(cinfo.Spec.Labels),
 		}
+		glog.Infof("STATS: RUNCOM: %v", cinfoID)
 		cinfoMap[cinfoID] = append(cinfoMap[cinfoID], containerInfoWithCgroup{
 			cinfo:  cinfo,
 			cgroup: key,
 		})
+		glog.Infof("STATS: RUNCOM: 2: %v", key)
 	}
+	glog.Infof("STATS: RUNCOM: 4: %v", cinfoMap)
 	result := make(map[string]cadvisorapiv2.ContainerInfo)
 	for _, refs := range cinfoMap {
 		if len(refs) == 1 {
@@ -242,6 +249,7 @@ func removeTerminatedContainerInfo(containerInfo map[string]cadvisorapiv2.Contai
 			result[refs[i].cgroup] = refs[i].cinfo
 		}
 	}
+	glog.Infof("STATS: RUNCOM: 3: %v", result)
 	return result
 }
 

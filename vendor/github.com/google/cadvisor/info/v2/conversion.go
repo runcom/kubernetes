@@ -237,6 +237,7 @@ func InstCpuStats(last, cur *v1.ContainerStats) (*CpuInstStats, error) {
 	if err != nil {
 		return nil, err
 	}
+	glog.Infof("RUNCOM HERE 1: total: %v, libcontainer last total: %v, cur total: %v", total, last.Cpu.Usage.Total, cur.Cpu.Usage.Total)
 	return &CpuInstStats{
 		Usage: CpuInstUsage{
 			Total:  total,

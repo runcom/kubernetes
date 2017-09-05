@@ -17,7 +17,16 @@ package crio
 
 import (
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
+	"syscall"
+	"time"
+)
+
+const (
+	crioSocket            = "/var/run/crio.sock"
+	maxUnixSocketPathSize = len(syscall.RawSockaddrUnix{}.Path)
 )
 
 type Info struct {
@@ -26,6 +35,7 @@ type Info struct {
 }
 
 type ContainerInfo struct {
+	Name        string            `json:"name"`
 	Pid         int               `json:"pid"`
 	Image       string            `json:"image"`
 	CreatedTime int64             `json:"created_time"`
@@ -33,10 +43,12 @@ type ContainerInfo struct {
 	Annotations map[string]string `json:"annotations"`
 	LogPath     string            `json:"log_path"`
 	Root        string            `json:"root"`
+	SandboxPid  int               `json:"sandbox_pid"`
+	IP          string            `json:"ip_address"`
 }
 
 type crioClient interface {
-	Info() (*Info, error)
+	Info() (Info, error)
 	ContainerInfo(string) (*ContainerInfo, error)
 }
 
@@ -44,31 +56,68 @@ type crioClientImpl struct {
 	client *http.Client
 }
 
+func configureUnixTransport(tr *http.Transport, proto, addr string) error {
+	if len(addr) > maxUnixSocketPathSize {
+		return fmt.Errorf("Unix socket path %q is too long", addr)
+	}
+	// No need for compression in local communications.
+	tr.DisableCompression = true
+	tr.Dial = func(_, _ string) (net.Conn, error) {
+		return net.DialTimeout(proto, addr, 32*time.Second)
+	}
+	return nil
+}
+
 // Client ...
 func Client() (crioClient, error) {
-	c := &http.Client{}
+	tr := new(http.Transport)
+	configureUnixTransport(tr, "unix", crioSocket)
+	c := &http.Client{
+		Transport: tr,
+	}
 	return &crioClientImpl{
 		client: c,
 	}, nil
 }
 
-// Info ...
-func (c *crioClientImpl) Info() (*Info, error) {
-	resp, err := c.client.Get("http://localhost:7373/info")
+func getRequest(path string) (*http.Request, error) {
+	req, err := http.NewRequest("GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	// For local communications over a unix socket, it doesn't matter what
+	// the host is. We just need a valid and meaningful host name.
+	req.Host = "crio"
+	req.URL.Host = crioSocket
+	req.URL.Scheme = "http"
+	return req, nil
+}
+
+// Info ...
+func (c *crioClientImpl) Info() (Info, error) {
 	info := Info{}
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		return nil, err
+	req, err := getRequest("/info")
+	if err != nil {
+		return info, err
 	}
-	return &info, nil
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return info, err
+	}
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return info, err
+	}
+	return info, nil
 }
 
 // ContainerInfo ...
 func (c *crioClientImpl) ContainerInfo(id string) (*ContainerInfo, error) {
-	resp, err := c.client.Get("http://localhost:7373/containers/" + id)
+	req, err := getRequest("/containers/" + id)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
