@@ -114,10 +114,11 @@ type VolumeTest struct {
 // NFS-specific wrapper for CreateStorageServer.
 func NewNFSServer(cs clientset.Interface, namespace string, args []string) (config VolumeTestConfig, pod *v1.Pod, ip string) {
 	config = VolumeTestConfig{
-		Namespace:   namespace,
-		Prefix:      "nfs",
-		ServerImage: NfsServerImage,
-		ServerPorts: []int{2049},
+		Namespace:     namespace,
+		Prefix:        "nfs",
+		ServerImage:   NfsServerImage,
+		ServerPorts:   []int{2049},
+		ServerVolumes: map[string]string{"/nfs-test": "/exports"},
 	}
 	if len(args) > 0 {
 		config.ServerArgs = args
